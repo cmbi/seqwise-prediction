@@ -1,3 +1,7 @@
+# editor
+*.swp
+*~
+
 # data
 *.hdf5
 *.csv
