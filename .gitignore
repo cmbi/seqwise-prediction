@@ -1,0 +1,6 @@
+# data
+*.hdf5
+*.csv
+
+# python intermediary
+*.pyc
