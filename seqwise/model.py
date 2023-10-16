@@ -165,7 +165,7 @@ class FlatteningModel(torch.nn.Module):
     def __init__(self):
         super(FlatteningModel, self).__init__()
 
-        s_transition = 512
+        c_transition = 512
 
         self.res_mlp = torch.nn.Sequential(
             torch.nn.Linear(22 * 9, c_transition),
