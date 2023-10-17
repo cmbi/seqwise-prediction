@@ -15,7 +15,7 @@ from seqwise.model import TransformerEncoderModel, ReswiseModel, FlatteningModel
 
 
 arg_parser = ArgumentParser(description="train a model and output the results")
-arg_parser.add_argument("model_type", help="must be transformer/reswise/flattening")
+arg_parser.add_argument("model_type", help="must be relative/transformer/reswise/flattening")
 arg_parser.add_argument("train_file", help="HDF5 file with training data")
 arg_parser.add_argument("valid_file", help="HDF5 file with validation data")
 arg_parser.add_argument("test_file", help="HDF5 file with test data")
@@ -30,7 +30,10 @@ _log = logging.getLogger(__name__)
 def get_model(model_type: str):
 
     if model_type == "transformer":
-        return TransformerEncoderModel()
+        return TransformerEncoderModel(do_relative_position_encoding=False)
+
+    elif model_type == "relative":
+        return TransformerEncoderModel(do_relative_position_encoding=True)
 
     elif model_type == "reswise":
         return ReswiseModel()

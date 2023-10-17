@@ -2,6 +2,39 @@ from typing import Optional
 from math import sqrt, log
 
 import torch
+from torch.nn.functional import one_hot
+
+
+def onehot_bin(x: torch.Tensor, bins: torch.Tensor) -> torch.Tensor:
+    n_bins = bins.shape[0]
+
+    b = torch.argmin(torch.abs(x.unsqueeze(-1).repeat([1] * len(x.shape) + [n_bins]) - bins), dim=-1)
+    return one_hot(b, num_classes=n_bins)
+
+
+def get_relative_position_encoding(encoding_depth: int) -> torch.Tensor:
+    """
+    D = encoding_depth
+
+    Returns: a N x N x D tensor
+    """
+
+    bin_min = int(encoding_depth / 2) - 1
+    bin_max = encoding_depth - bin_min
+    bin_min = -bin_min
+
+    # [D]
+    bins = torch.arange(bin_min, bin_max, 1)
+
+    # [N]
+    positions = torch.arange(0, 9, 1, device=bins.device)
+
+    # [N, N]
+    d = positions.unsqueeze(-2) - positions.unsqueeze(-1)
+
+    # [N, N, D]
+    enc = onehot_bin(d, bins)
+    return enc
 
 
 class PositionalEncoding(torch.nn.Module):
@@ -37,11 +70,17 @@ class TransformerEncoderLayer(torch.nn.Module):
     def __init__(self,
                  depth: int,
                  n_head: int,
-                 dropout: Optional[float] = 0.1):
+                 dropout: Optional[float] = 0.1,
+                 do_relative_position_encoding: Optional[bool] = False):
 
         super(TransformerEncoderLayer, self).__init__()
 
         self.n_head = n_head
+
+        self.relative_position_encoding = None
+        if do_relative_position_encoding:
+            # [1, n_head, 9, 9]
+            self.relative_position_encoding = get_relative_position_encoding(self.n_head).transpose(2, 1).transpose(1, 0).unsqueeze(0)
 
         self.dropout = torch.nn.Dropout(dropout)
 
@@ -76,7 +115,10 @@ class TransformerEncoderLayer(torch.nn.Module):
         v = self.linear_v(seq).reshape(batch_size, seq_len, self.n_head, d).transpose(1, 2)
 
         # [batch_size, n_head, seq_len, seq_len]
-        a = torch.softmax(torch.matmul(q, k.transpose(2, 3)) / sqrt(d), dim=3)
+        a = torch.matmul(q, k.transpose(2, 3)) / sqrt(d)
+        if self.relative_position_encoding is not None:
+            a += self.relative_position_encoding
+        a = torch.softmax(a, dim=3)
 
         # [batch_size, n_head, seq_len, d]
         heads = torch.matmul(a, v)
@@ -114,21 +156,29 @@ class TransformerEncoderLayer(torch.nn.Module):
 
 class TransformerEncoderModel(torch.nn.Module):
 
-    def __init__(self):
+    def __init__(self, do_relative_position_encoding: bool):
 
         super(TransformerEncoderModel, self).__init__()
 
         c_res = 128
 
-        self.pos_encoder = PositionalEncoding(22, 9)
-        self.transf_encoder = TransformerEncoderLayer(22, 2)
+        if do_relative_position_encoding:
+            self.pos_encoder = None
+        else:
+            self.pos_encoder = PositionalEncoding(22, 9)
+
+        self.transf_encoder = TransformerEncoderLayer(22, 2,
+                                                      dropout=0.1,
+                                                      do_relative_position_encoding=do_relative_position_encoding)
 
         self.res_linear = torch.nn.Linear(22, 1)
         self.output_linear = torch.nn.Linear(9, 2)
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
-        seq_embd = self.pos_encoder(seq_embd)
+        if self.pos_encoder is not None:
+            seq_embd = self.pos_encoder(seq_embd)
+
         seq_embd = self.transf_encoder(seq_embd)
 
         p = self.res_linear(seq_embd)[..., 0]
