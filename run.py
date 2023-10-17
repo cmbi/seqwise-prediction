@@ -11,7 +11,7 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 
 from seqwise.dataset import SequenceDataset
-from seqwise.model import TransformerEncoderModel, ReswiseModel, FlatteningModel
+from seqwise.model import TransformerEncoderModel, ReswiseModel, FlatteningModel, RelativePositionEncodingModel
 
 
 arg_parser = ArgumentParser(description="train a model and output the results")
@@ -30,10 +30,10 @@ _log = logging.getLogger(__name__)
 def get_model(model_type: str):
 
     if model_type == "transformer":
-        return TransformerEncoderModel(do_relative_position_encoding=False)
+        return TransformerEncoderModel()
 
     elif model_type == "relative":
-        return TransformerEncoderModel(do_relative_position_encoding=True)
+        return RelativePositionEncodingModel()
 
     elif model_type == "reswise":
         return ReswiseModel()

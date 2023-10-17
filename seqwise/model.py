@@ -12,29 +12,40 @@ def onehot_bin(x: torch.Tensor, bins: torch.Tensor) -> torch.Tensor:
     return one_hot(b, num_classes=n_bins)
 
 
-def get_relative_position_encoding(encoding_depth: int) -> torch.Tensor:
-    """
-    D = encoding_depth
 
-    Returns: a N x N x D tensor
-    """
+class RelativePositionEncoding(torch.nn.Module):
 
-    bin_min = int(encoding_depth / 2) - 1
-    bin_max = encoding_depth - bin_min
-    bin_min = -bin_min
+    def __init__(self, c_z: int, relpos_k: int,):
 
-    # [D]
-    bins = torch.arange(bin_min, bin_max, 1)
+        super(RelativePositionEncoding, self).__init__()
 
-    # [N]
-    positions = torch.arange(0, 9, 1, device=bins.device)
+        self.relpos_k = relpos_k
+        self.no_bins = 2 * relpos_k + 1
+        self.linear_relpos = torch.nn.Linear(self.no_bins, c_z)
 
-    # [N, N]
-    d = positions.unsqueeze(-2) - positions.unsqueeze(-1)
+    def forward(self, ri: torch.Tensor) -> torch.Tensor:
+        """
+        Computes relative positional encodings
 
-    # [N, N, D]
-    enc = onehot_bin(d, bins)
-    return enc
+        Implements Algorithm 4.
+
+        Args:
+            ri:
+                "residue_index" features of shape [*, N]
+        """
+        d = ri[..., None] - ri[..., None, :]
+        boundaries = torch.arange(
+            start=-self.relpos_k, end=self.relpos_k + 1, device=d.device
+        )
+        reshaped_bins = boundaries.view(((1,) * len(d.shape)) + (len(boundaries),))
+        d = d[..., None] - reshaped_bins
+        d = torch.abs(d)
+        d = torch.argmin(d, dim=-1)
+        d = torch.nn.functional.one_hot(d, num_classes=len(boundaries)).float()
+        d = d.to(ri.dtype)
+
+        return self.linear_relpos(d)
+
 
 
 class PositionalEncoding(torch.nn.Module):
@@ -70,17 +81,12 @@ class TransformerEncoderLayer(torch.nn.Module):
     def __init__(self,
                  depth: int,
                  n_head: int,
-                 dropout: Optional[float] = 0.1,
-                 do_relative_position_encoding: Optional[bool] = False):
+                 dropout: Optional[float] = 0.1):
 
         super(TransformerEncoderLayer, self).__init__()
 
         self.n_head = n_head
 
-        self.relative_position_encoding = None
-        if do_relative_position_encoding:
-            # [1, n_head, 9, 9]
-            self.relative_position_encoding = get_relative_position_encoding(self.n_head).transpose(2, 1).transpose(1, 0).unsqueeze(0)
 
         self.dropout = torch.nn.Dropout(dropout)
 
@@ -100,11 +106,14 @@ class TransformerEncoderLayer(torch.nn.Module):
             torch.nn.Linear(self.ff_intermediary_depth, depth),
         )
 
+        self.pos_enc_linear = torch.nn.Linear(depth, n_head)
+
         self.norm_ff = torch.nn.LayerNorm(depth)
 
     def self_attention(
         self,
         seq: torch.Tensor,
+        pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
         batch_size, seq_len, d = seq.shape
@@ -116,15 +125,16 @@ class TransformerEncoderLayer(torch.nn.Module):
 
         # [batch_size, n_head, seq_len, seq_len]
         a = torch.matmul(q, k.transpose(2, 3)) / sqrt(d)
-        if self.relative_position_encoding is not None:
-            a += self.relative_position_encoding
+        if pos_enc is not None:
+            p = self.pos_enc_linear(pos_enc).transpose(3, 2).transpose(2, 1)
+            a += p
         a = torch.softmax(a, dim=3)
 
         # [batch_size, n_head, seq_len, d]
         heads = torch.matmul(a, v)
 
         # [batch_size, seq_len, d]
-        o = self.linear_o(heads.transpose(1, 2).reshape(batch_size, seq_len, d * self.n_head))
+        o = self.linear_o(heads.transpose(1, 2).contiguous().reshape(batch_size, seq_len, d * self.n_head))
 
         return o
 
@@ -135,13 +145,15 @@ class TransformerEncoderLayer(torch.nn.Module):
         return o
 
     def forward(self,
-                seq: torch.Tensor) -> torch.Tensor:
+                seq: torch.Tensor,
+                pos_enc: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
 
         x = seq
 
         x = self.dropout(x)
 
-        y = self.self_attention(x)
+        y = self.self_attention(x, pos_enc)
 
         y = self.dropout(y)
         x = self.norm_att(x + y)
@@ -154,30 +166,52 @@ class TransformerEncoderLayer(torch.nn.Module):
         return x
 
 
-class TransformerEncoderModel(torch.nn.Module):
+class RelativePositionEncodingModel(torch.nn.Module):
 
-    def __init__(self, do_relative_position_encoding: bool):
+    def __init__(self):
 
-        super(TransformerEncoderModel, self).__init__()
+        super(RelativePositionEncodingModel, self).__init__()
 
-        c_res = 128
-
-        if do_relative_position_encoding:
-            self.pos_encoder = None
-        else:
-            self.pos_encoder = PositionalEncoding(22, 9)
+        self.pos_encoder = RelativePositionEncoding(22, 9)
 
         self.transf_encoder = TransformerEncoderLayer(22, 2,
-                                                      dropout=0.1,
-                                                      do_relative_position_encoding=do_relative_position_encoding)
+                                                      dropout=0.1)
 
         self.res_linear = torch.nn.Linear(22, 1)
         self.output_linear = torch.nn.Linear(9, 2)
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
-        if self.pos_encoder is not None:
-            seq_embd = self.pos_encoder(seq_embd)
+        pos_enc = self.pos_encoder(torch.arange(0, 9, 1, dtype=torch.float).unsqueeze(0).repeat(seq_embd.shape[0], 1))
+
+        seq_embd = self.transf_encoder(seq_embd, pos_enc)
+
+        p = self.res_linear(seq_embd)[..., 0]
+
+        return self.output_linear(p)
+
+
+class TransformerEncoderModel(torch.nn.Module):
+
+    def __init__(self):
+
+        super(TransformerEncoderModel, self).__init__()
+
+        c_res = 128
+
+        self.pos_encoder = PositionalEncoding(22, 9)
+
+        self.transf_encoder = torch.nn.TransformerEncoder(
+            torch.nn.TransformerEncoderLayer(22, 2),
+            1
+        )
+
+        self.res_linear = torch.nn.Linear(22, 1)
+        self.output_linear = torch.nn.Linear(9, 2)
+
+    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
+
+        seq_embd = self.pos_encoder(seq_embd)
 
         seq_embd = self.transf_encoder(seq_embd)
 
