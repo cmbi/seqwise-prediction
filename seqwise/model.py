@@ -47,6 +47,57 @@ class RelativePositionEncoding(torch.nn.Module):
         return self.linear_relpos(d)
 
 
+class RelativePositionEncodingWithOuterSum(torch.nn.Module):
+
+    def __init__(self, c_z: int, relpos_k: int, tf_dim: int):
+
+        super(RelativePositionEncodingWithOuterSum, self).__init__()
+
+        self.linear_tf_z_i = torch.nn.Linear(tf_dim, c_z)
+        self.linear_tf_z_j = torch.nn.Linear(tf_dim, c_z)
+
+        self.relpos_k = relpos_k
+        self.no_bins = 2 * relpos_k + 1
+        self.linear_relpos = torch.nn.Linear(self.no_bins, c_z)
+
+    def relpos(self, ri: torch.Tensor):
+
+        d = ri[..., None] - ri[..., None, :]
+        boundaries = torch.arange(
+            start=-self.relpos_k, end=self.relpos_k + 1, device=d.device
+        )
+        reshaped_bins = boundaries.view(((1,) * len(d.shape)) + (len(boundaries),))
+        d = d[..., None] - reshaped_bins
+        d = torch.abs(d)
+        d = torch.argmin(d, dim=-1)
+        d = torch.nn.functional.one_hot(d, num_classes=len(boundaries)).float()
+        d = d.to(ri.dtype)
+
+        return self.linear_relpos(d)
+
+    def forward(self, tf: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            tf:
+                "target_feat" features of shape [*, N_res, tf_dim]
+        Returns:
+            pair_emb:
+                [*, N_res, N_res, C_z] pair embedding
+        """
+
+        ri = torch.arange(0, tf.shape[1], 1, dtype=torch.float).unsqueeze(0).repeat(tf.shape[0], 1)
+
+        relpos = self.relpos(ri)
+
+        # [*, N_res, c_z]
+        tf_emb_i = self.linear_tf_z_i(tf)
+        tf_emb_j = self.linear_tf_z_j(tf)
+
+        # [*, N_res, N_res, c_z]
+        pair_emb = relpos + tf_emb_i[:, :, None, :] + tf_emb_j[:, None, :, :]
+
+        return pair_emb
+
 
 class PositionalEncoding(torch.nn.Module):
 
@@ -123,7 +174,7 @@ class TransformerEncoderLayer(torch.nn.Module):
         k = self.linear_k(seq).reshape(batch_size, seq_len, self.n_head, d).transpose(1, 2)
         v = self.linear_v(seq).reshape(batch_size, seq_len, self.n_head, d).transpose(1, 2)
 
-        # [batch_size, n_head, seq_len, seq_len]
+        # [batch_size, n_head, seq_len, seq_len]~/projects/seqwise-prediction/run.py
         a = torch.matmul(q, k.transpose(2, 3)) / sqrt(d)
         if pos_enc is not None:
             p = self.pos_enc_linear(pos_enc).transpose(3, 2).transpose(2, 1)
@@ -188,6 +239,44 @@ class RelativePositionEncodingModel(torch.nn.Module):
 
         p = self.res_linear(seq_embd)[..., 0]
 
+        return self.output_linear(p)
+
+
+class OuterSumModel(torch.nn.Module):
+
+    def __init__(self):
+
+        super(OuterSumModel, self).__init__()
+
+        self.outersum = RelativePositionEncodingWithOuterSum(22, 9, 22)
+
+        c_transition = 512
+
+        self.pairwise_mlp = torch.nn.Sequential(
+            torch.nn.Linear(22 * 9, c_transition),
+            torch.nn.ReLU(),
+            torch.nn.Linear(c_transition, c_transition),
+            torch.nn.ReLU(),
+            torch.nn.Linear(c_transition, 22),
+        )
+
+        self.res_linear = torch.nn.Linear(22, 1)
+        self.output_linear = torch.nn.Linear(9, 2)
+
+    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
+
+        b, l, d = seq_embd.shape
+
+        # [b, l, l, d]
+        pairwise = self.outersum(seq_embd)
+
+        # [b, l, d]
+        seq_embd = self.pairwise_mlp(pairwise.reshape(b, l, l * d))
+
+        # [b, l]
+        p = self.res_linear(seq_embd)[..., 0]
+
+        # [b, 2]
         return self.output_linear(p)
 
 
