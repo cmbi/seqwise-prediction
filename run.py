@@ -14,12 +14,13 @@ from seqwise.dataset import SequenceDataset
 from seqwise.model import (TransformerEncoderModel,
                            ReswiseModel,
                            FlatteningModel,
+                           RelativeAbsolutePositionEncodingModel,
                            RelativePositionEncodingModel,
                            OuterSumModel)
 
 
 arg_parser = ArgumentParser(description="train a model and output the results")
-arg_parser.add_argument("model_type", help="must be outersum/relative/transformer/reswise/flattening")
+arg_parser.add_argument("model_type", help="must be outersum/relative/relabs/transformer/reswise/flattening")
 arg_parser.add_argument("train_file", help="HDF5 file with training data")
 arg_parser.add_argument("valid_file", help="HDF5 file with validation data")
 arg_parser.add_argument("test_file", help="HDF5 file with test data")
@@ -38,6 +39,9 @@ def get_model(model_type: str):
 
     elif model_type == "outersum":
         return OuterSumModel()
+
+    elif model_type == "relabs":
+        return RelativeAbsolutePositionEncodingModel()
 
     elif model_type == "relative":
         return RelativePositionEncodingModel()

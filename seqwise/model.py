@@ -242,6 +242,34 @@ class RelativePositionEncodingModel(torch.nn.Module):
         return self.output_linear(p)
 
 
+class RelativeAbsolutePositionEncodingModel(torch.nn.Module):
+
+    def __init__(self):
+
+        super(RelativeAbsolutePositionEncodingModel, self).__init__()
+
+        self.relpos_encoder = RelativePositionEncoding(22, 9)
+
+        self.abspos_encoder = PositionalEncoding(22, 9)
+
+        self.transf_encoder = TransformerEncoderLayer(22, 2, dropout=0.1)
+
+        self.res_linear = torch.nn.Linear(22, 1)
+        self.output_linear = torch.nn.Linear(9, 2)
+
+    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
+
+        seq_embd = self.abspos_encoder(seq_embd)
+
+        relpos_enc = self.relpos_encoder(torch.arange(0, 9, 1, dtype=torch.float).unsqueeze(0).repeat(seq_embd.shape[0], 1))
+
+        seq_embd = self.transf_encoder(seq_embd, relpos_enc)
+
+        p = self.res_linear(seq_embd)[..., 0]
+
+        return self.output_linear(p)
+
+
 class OuterSumModel(torch.nn.Module):
 
     def __init__(self):
