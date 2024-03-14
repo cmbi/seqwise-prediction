@@ -159,7 +159,7 @@ if __name__ == "__main__":
     args = arg_parser.parse_args()
 
     train_dataset = SequenceDataset(args.train_file)
-    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size)
+    train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
     valid_dataset = SequenceDataset(args.valid_file)
     valid_data_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
