@@ -27,8 +27,8 @@ class SequenceDataset(Dataset):
 
         with h5py.File(self._hdf5_path, 'r') as hdf5_file:
 
-            seq_embd = torch.tensor(hdf5_file[entry_name]["loop/sequence_onehot"][:])
-            cls = torch.tensor((hdf5_file[entry_name]["kd"][()] < 500.0).astype('int'), dtype=torch.long)
+            seq_embd = torch.tensor(hdf5_file[entry_name]["peptide/sequence_onehot"][:])
+            cls = torch.tensor((hdf5_file[entry_name]["affinity"][()] > (1.0 - log(500.0) / log(50000.0))).astype('int'), dtype=torch.long)
 
         return seq_embd, cls
 
