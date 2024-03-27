@@ -6,7 +6,7 @@ import logging
 
 import pandas
 import torch
-from sklearn.metrics import matthews_corrcoef
+from sklearn.metrics import matthews_corrcoef, roc_auc_score
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 
@@ -101,9 +101,11 @@ def epoch(model: torch.nn.Module,
         epoch_true += true_cls.tolist()
         epoch_pred += pred_cls.tolist()
 
+    auc = roc_auc_score(epoch_true, epoch_pred)
     mcc = matthews_corrcoef(epoch_true, epoch_pred)
     epoch_loss /= len(epoch_true)
 
+    store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "matthews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", epoch_loss)
 
@@ -129,9 +131,11 @@ def valid(model: torch.nn.Module,
             valid_true += true_cls.tolist()
             valid_pred += pred_cls.tolist()
 
+    auc = roc_auc_score(valid_true, valid_pred)
     mcc = matthews_corrcoef(valid_true, valid_pred)
     valid_loss /= len(valid_true)
 
+    store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "mathews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", valid_loss)
 
