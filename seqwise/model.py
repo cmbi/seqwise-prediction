@@ -371,11 +371,11 @@ class FlatteningModel(torch.nn.Module):
         self.res_mlp = torch.nn.Sequential(
             torch.nn.Linear(22 * 9, c_transition),
             torch.nn.GELU(),
-            torch.nn.Linear(c_transition, 2),
+            torch.nn.Linear(c_transition, 1),
         )
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
         batch_size, loop_len, loop_depth = seq_embd.shape
 
-        return self.res_mlp(seq_embd.reshape(batch_size, loop_len * loop_depth))
+        return self.res_mlp(seq_embd.reshape(batch_size, loop_len * loop_depth)).reshape(batch_size)
