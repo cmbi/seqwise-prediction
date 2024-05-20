@@ -29,12 +29,13 @@ arg_parser.add_argument("test_file", help="HDF5 file with test data")
 arg_parser.add_argument("results_file", help="CSV file where results will be stored")
 arg_parser.add_argument("--batch_size", "-b", type=int, default=64)
 arg_parser.add_argument("--epoch-count", "-e", type=int, default=100)
+arg_parser.add_argument("--blosum", help="use blosum62 encoding instead of one-hot encoding", action="store_const", const=True, default=False)
 
 
 _log = logging.getLogger(__name__)
 
 
-def get_model(model_type: str):
+def get_model(model_type: str) -> torch.nn.Module:
 
     if model_type == "transformer":
         return TransformerEncoderModel()
@@ -182,13 +183,13 @@ if __name__ == "__main__":
 
     args = arg_parser.parse_args()
 
-    train_dataset = SequenceDataset(args.train_file)
+    train_dataset = SequenceDataset(args.train_file, args.blosum)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
-    valid_dataset = SequenceDataset(args.valid_file)
+    valid_dataset = SequenceDataset(args.valid_file, args.blosum)
     valid_data_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
 
-    test_dataset = SequenceDataset(args.test_file)
+    test_dataset = SequenceDataset(args.test_file, args.blosum)
     test_data_loader = DataLoader(test_dataset, batch_size=args.batch_size)
 
     model = get_model(args.model_type)
