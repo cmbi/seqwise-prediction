@@ -3,10 +3,12 @@
 from argparse import ArgumentParser
 import os
 import logging
+from math import log
 
 import pandas
 import torch
 from sklearn.metrics import matthews_corrcoef, roc_auc_score
+from scipy.stats import pearsonr
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 
@@ -72,7 +74,10 @@ def store_metrics(path: str, phase_name: str, epoch_index: int, value_name: str,
     _log.debug(f"store {column_name}, {value}")
 
 
-loss_func = torch.nn.CrossEntropyLoss(reduction="mean")
+#loss_func = torch.nn.CrossEntropyLoss(reduction="mean")
+loss_func = torch.nn.MSELoss(reduction="mean")
+
+binding_threshold = 1.0 - log(500.0) / log(50000.0)
 
 def epoch(model: torch.nn.Module,
           optimizer: torch.optim.Optimizer,
@@ -83,28 +88,35 @@ def epoch(model: torch.nn.Module,
 
     epoch_loss = 0.0
     epoch_true = []
+    epoch_true_cls = []
     epoch_pred = []
-    for input_, true_cls in data_loader:
+    epoch_pred_cls = []
+    for input_, true_ba in data_loader:
+        true_cls = true_ba > binding_threshold
 
         optimizer.zero_grad()
 
-        output = model(input_)
-        batch_loss = loss_func(output, true_cls)
-        pred_cls = torch.argmax(output, dim=1)
+        pred_ba = model(input_)
+        pred_cls = pred_ba > binding_threshold
+        batch_loss = loss_func(pred_ba, true_ba)
 
         batch_loss.backward()
         optimizer.step()
 
-        batch_size = true_cls.shape[0]
+        batch_size = true_ba.shape[0]
         epoch_loss += batch_loss.item() * batch_size
 
-        epoch_true += true_cls.tolist()
-        epoch_pred += pred_cls.tolist()
+        epoch_true += true_ba.tolist()
+        epoch_true_cls += true_cls.tolist()
+        epoch_pred += pred_ba.tolist()
+        epoch_pred_cls += pred_cls.tolist()
 
-    auc = roc_auc_score(epoch_true, epoch_pred)
-    mcc = matthews_corrcoef(epoch_true, epoch_pred)
+    auc = roc_auc_score(epoch_true_cls, epoch_pred)
+    mcc = matthews_corrcoef(epoch_true_cls, epoch_pred_cls)
+    pcc = pearsonr(epoch_true, epoch_pred).statistic
     epoch_loss /= len(epoch_true)
 
+    store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "matthews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", epoch_loss)
@@ -118,23 +130,31 @@ def valid(model: torch.nn.Module,
 
     valid_loss = 0.0
     valid_true = []
+    valid_true_cls = []
     valid_pred = []
+    valid_pred_cls = []
     with torch.no_grad():
-        for input_, true_cls in data_loader:
-            output = model(input_)
-            batch_loss = loss_func(output, true_cls)
-            pred_cls = torch.argmax(output, dim=1)
+        for input_, true_ba in data_loader:
+            true_cls = true_ba > binding_threshold
 
-            batch_size = true_cls.shape[0]
+            pred_ba = model(input_)
+            pred_cls = pred_ba > binding_threshold
+            batch_loss = loss_func(pred_ba, true_ba)
+
+            batch_size = true_ba.shape[0]
             valid_loss += batch_loss.item() * batch_size
 
-            valid_true += true_cls.tolist()
-            valid_pred += pred_cls.tolist()
+            valid_true += true_ba.tolist()
+            valid_true_cls += true_cls.tolist()
+            valid_pred += pred_ba.tolist()
+            valid_pred_cls += pred_cls.tolist()
 
-    auc = roc_auc_score(valid_true, valid_pred)
-    mcc = matthews_corrcoef(valid_true, valid_pred)
+    auc = roc_auc_score(valid_true_cls, valid_pred)
+    mcc = matthews_corrcoef(valid_true_cls, valid_pred_cls)
+    pcc = pearsonr(valid_true, valid_pred).statistic
     valid_loss /= len(valid_true)
 
+    store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "mathews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", valid_loss)
