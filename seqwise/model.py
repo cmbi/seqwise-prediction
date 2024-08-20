@@ -244,9 +244,13 @@ class RelativePositionEncodingModel(torch.nn.Module):
 
 class RelativeAbsolutePositionEncodingModel(torch.nn.Module):
 
-    def __init__(self):
+    def __init__(self, classification: bool):
 
         super(RelativeAbsolutePositionEncodingModel, self).__init__()
+
+        o = 1
+        if classification:
+            o = 2
 
         self.relpos_encoder = RelativePositionEncoding(22, 9)
 
@@ -255,7 +259,7 @@ class RelativeAbsolutePositionEncodingModel(torch.nn.Module):
         self.transf_encoder = TransformerEncoderLayer(22, 2, dropout=0.1)
 
         self.res_linear = torch.nn.Linear(22, 1)
-        self.output_linear = torch.nn.Linear(9, 2)
+        self.output_linear = torch.nn.Linear(9, o)
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
@@ -272,11 +276,15 @@ class RelativeAbsolutePositionEncodingModel(torch.nn.Module):
 
 class OuterSumModel(torch.nn.Module):
 
-    def __init__(self):
+    def __init__(self, classification: bool):
 
         super(OuterSumModel, self).__init__()
 
         self.outersum = RelativePositionEncodingWithOuterSum(22, 9, 22)
+
+        o = 1
+        if classification:
+            o = 2
 
         c_transition = 512
 
@@ -289,7 +297,7 @@ class OuterSumModel(torch.nn.Module):
         )
 
         self.res_linear = torch.nn.Linear(22, 1)
-        self.output_linear = torch.nn.Linear(9, 2)
+        self.output_linear = torch.nn.Linear(9, o)
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
@@ -310,9 +318,13 @@ class OuterSumModel(torch.nn.Module):
 
 class TransformerEncoderModel(torch.nn.Module):
 
-    def __init__(self):
+    def __init__(self, classification: bool):
 
         super(TransformerEncoderModel, self).__init__()
+
+        o = 1
+        if classification:
+            o = 2
 
         c_res = 128
 
@@ -320,7 +332,7 @@ class TransformerEncoderModel(torch.nn.Module):
 
         self.transf_encoder = torch.nn.TransformerEncoder(
             torch.nn.TransformerEncoderLayer(22, 2),
-            1
+            o
         )
 
         self.res_linear = torch.nn.Linear(22, 1)
@@ -338,8 +350,12 @@ class TransformerEncoderModel(torch.nn.Module):
 
 
 class ReswiseModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, classification: bool):
         super(ReswiseModel, self).__init__()
+
+        o = 1
+        if classification:
+            o = 2
 
         c_res = 128
 
@@ -348,7 +364,7 @@ class ReswiseModel(torch.nn.Module):
         self.res_transition = torch.nn.Sequential(
             torch.nn.Linear(22, c_res),
             torch.nn.GELU(),
-            torch.nn.Linear(c_res, 1),
+            torch.nn.Linear(c_res, o),
         )
 
         self.output_linear = torch.nn.Linear(9, 2)
@@ -363,15 +379,19 @@ class ReswiseModel(torch.nn.Module):
 
 
 class FlatteningModel(torch.nn.Module):
-    def __init__(self):
+    def __init__(self, classification: bool):
         super(FlatteningModel, self).__init__()
+
+        o = 1
+        if classification:
+            o = 2
 
         c_transition = 512
 
         self.res_mlp = torch.nn.Sequential(
             torch.nn.Linear(22 * 9, c_transition),
             torch.nn.GELU(),
-            torch.nn.Linear(c_transition, 2),
+            torch.nn.Linear(c_transition, o),
         )
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:

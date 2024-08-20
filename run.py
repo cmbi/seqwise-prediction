@@ -3,10 +3,13 @@
 from argparse import ArgumentParser
 import os
 import logging
+from math import log
 
+import numpy
 import pandas
 import torch
 from sklearn.metrics import matthews_corrcoef, roc_auc_score
+from scipy.stats import pearsonr
 from torch.utils.data import DataLoader
 from torch.optim import Adam
 
@@ -27,30 +30,31 @@ arg_parser.add_argument("test_file", help="HDF5 file with test data")
 arg_parser.add_argument("results_file", help="CSV file where results will be stored")
 arg_parser.add_argument("--batch_size", "-b", type=int, default=64)
 arg_parser.add_argument("--epoch-count", "-e", type=int, default=100)
+arg_parser.add_argument("--classification", "-c", action="store_const", const=True, default=False)
 
 
 _log = logging.getLogger(__name__)
 
 
-def get_model(model_type: str):
+def get_model(model_type: str, classification: bool):
 
     if model_type == "transformer":
-        return TransformerEncoderModel()
+        return TransformerEncoderModel(classification)
 
     elif model_type == "outersum":
-        return OuterSumModel()
+        return OuterSumModel(classification)
 
     elif model_type == "relabs":
-        return RelativeAbsolutePositionEncodingModel()
+        return RelativeAbsolutePositionEncodingModel(classification)
 
     elif model_type == "relative":
-        return RelativePositionEncodingModel()
+        return RelativePositionEncodingModel(classification)
 
     elif model_type == "reswise":
-        return ReswiseModel()
+        return ReswiseModel(classification)
 
     elif model_type == "flattening":
-        return FlatteningModel()
+        return FlatteningModel(classification)
 
     else:
         raise ValueError(f"unknown model: {model_type}")
@@ -71,38 +75,55 @@ def store_metrics(path: str, phase_name: str, epoch_index: int, value_name: str,
 
     _log.debug(f"store {column_name}, {value}")
 
-
-loss_func = torch.nn.CrossEntropyLoss(reduction="mean")
-
 def epoch(model: torch.nn.Module,
           optimizer: torch.optim.Optimizer,
           data_loader: DataLoader,
           epoch_index: int,
           metrics_path: str,
-          phase_name: str):
+          phase_name: str,
+          classification: bool):
+
+    if classification:
+        loss_func = torch.nn.CrossEntropyLoss(reduction='mean')
+    else:
+        loss_func = torch.nn.MSELoss(reduction='mean')
+        affinity_treshold = 1.0 - log(500) / log(50000)
 
     epoch_loss = 0.0
     epoch_true = []
     epoch_pred = []
-    for input_, true_cls in data_loader:
+    for input_, true in data_loader:
 
         optimizer.zero_grad()
 
         output = model(input_)
-        batch_loss = loss_func(output, true_cls)
-        pred_cls = torch.argmax(output, dim=1)
+        batch_loss = loss_func(output, true)
 
         batch_loss.backward()
         optimizer.step()
 
-        batch_size = true_cls.shape[0]
+        batch_size = true.shape[0]
         epoch_loss += batch_loss.item() * batch_size
 
-        epoch_true += true_cls.tolist()
-        epoch_pred += pred_cls.tolist()
+        if classification:
+            epoch_pred += output.tolist()
+            epoch_true += true.tolist()
+        else:
+            epoch_pred += output[..., 0].tolist()
+            epoch_true += true[..., 0].tolist()
 
-    auc = roc_auc_score(epoch_true, epoch_pred)
-    mcc = matthews_corrcoef(epoch_true, epoch_pred)
+    if classification:
+        auc = roc_auc_score(epoch_true, epoch_pred)
+        mcc = matthews_corrcoef(epoch_true, torch.argmax(epoch_pred, dim=-1))
+    else:
+        pcc = pearsonr(epoch_true, epoch_pred).statistic
+        store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
+
+        true_cls = numpy.array(epoch_true) > affinity_treshold
+        pred_cls = numpy.array(epoch_pred) > affinity_treshold
+        auc = roc_auc_score(true_cls, epoch_pred)
+        mcc = matthews_corrcoef(true_cls, pred_cls)
+
     epoch_loss /= len(epoch_true)
 
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
@@ -114,25 +135,45 @@ def valid(model: torch.nn.Module,
           data_loader: DataLoader,
           epoch_index: int,
           metrics_path: str,
-          phase_name: str):
+          phase_name: str,
+          classification: bool):
+
+    if classification:
+        loss_func = torch.nn.CrossEntropyLoss(reduction='mean')
+    else:
+        loss_func = torch.nn.MSELoss(reduction='mean')
+        affinity_treshold = 1.0 - log(500) / log(50000)
 
     valid_loss = 0.0
     valid_true = []
     valid_pred = []
     with torch.no_grad():
-        for input_, true_cls in data_loader:
+        for input_, true in data_loader:
             output = model(input_)
-            batch_loss = loss_func(output, true_cls)
-            pred_cls = torch.argmax(output, dim=1)
+            batch_loss = loss_func(output, true)
 
-            batch_size = true_cls.shape[0]
+            batch_size = true.shape[0]
             valid_loss += batch_loss.item() * batch_size
 
-            valid_true += true_cls.tolist()
-            valid_pred += pred_cls.tolist()
+            if classification:
+                valid_pred += output.tolist()
+                valid_true += true.tolist()
+            else:
+                valid_pred += output[..., 0].tolist()
+                valid_true += true[..., 0].tolist()
 
-    auc = roc_auc_score(valid_true, valid_pred)
-    mcc = matthews_corrcoef(valid_true, valid_pred)
+    if classification:
+        auc = roc_auc_score(valid_true, valid_pred)
+        mcc = matthews_corrcoef(valid_true, torch.argmax(valid_pred, dim=-1))
+    else:
+        pcc = pearsonr(valid_true, valid_pred).statistic
+        store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
+
+        true_cls = numpy.array(valid_true) > affinity_treshold
+        pred_cls = numpy.array(valid_pred) > affinity_treshold
+        auc = roc_auc_score(true_cls, valid_pred)
+        mcc = matthews_corrcoef(true_cls, pred_cls)
+
     valid_loss /= len(valid_true)
 
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
@@ -145,32 +186,31 @@ def train(model: torch.nn.Module,
           train_data_loader: DataLoader,
           valid_data_loader: DataLoader,
           test_data_loader: DataLoader,
-          epoch_count: int):
+          epoch_count: int,
+          classification: bool):
 
     optimizer = Adam(model.parameters(), lr=0.001)
 
     for epoch_index in range(epoch_count):
-        epoch(model, optimizer, train_data_loader, epoch_index, metrics_path, "train")
-        valid(model, valid_data_loader, epoch_index, metrics_path, "valid")
-        valid(model, test_data_loader, epoch_index, metrics_path, "test")
+        epoch(model, optimizer, train_data_loader, epoch_index, metrics_path, "train", classification)
+        valid(model, valid_data_loader, epoch_index, metrics_path, "valid", classification)
+        valid(model, test_data_loader, epoch_index, metrics_path, "test", classification)
 
 
 
 if __name__ == "__main__":
 
-
-
     args = arg_parser.parse_args()
 
-    train_dataset = SequenceDataset(args.train_file)
+    train_dataset = SequenceDataset(args.train_file, args.classification)
     train_data_loader = DataLoader(train_dataset, batch_size=args.batch_size, shuffle=True)
 
-    valid_dataset = SequenceDataset(args.valid_file)
+    valid_dataset = SequenceDataset(args.valid_file, args.classification)
     valid_data_loader = DataLoader(valid_dataset, batch_size=args.batch_size)
 
-    test_dataset = SequenceDataset(args.test_file)
+    test_dataset = SequenceDataset(args.test_file, args.classification)
     test_data_loader = DataLoader(test_dataset, batch_size=args.batch_size)
 
-    model = get_model(args.model_type)
+    model = get_model(args.model_type, args.classification)
 
-    train(model, args.results_file, train_data_loader, valid_data_loader, test_data_loader, args.epoch_count)
+    train(model, args.results_file, train_data_loader, valid_data_loader, test_data_loader, args.epoch_count, args.classification)
