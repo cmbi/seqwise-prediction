@@ -31,6 +31,7 @@ arg_parser.add_argument("results_file", help="CSV file where results will be sto
 arg_parser.add_argument("--batch_size", "-b", type=int, default=64)
 arg_parser.add_argument("--epoch-count", "-e", type=int, default=100)
 arg_parser.add_argument("--classification", "-c", action="store_const", const=True, default=False)
+arg_parser.add_argument("--blosum", help="use blosum62 encoding instead of one-hot encoding", action="store_const", const=True, default=False)
 
 
 _log = logging.getLogger(__name__)
@@ -75,6 +76,7 @@ def store_metrics(path: str, phase_name: str, epoch_index: int, value_name: str,
 
     _log.debug(f"store {column_name}, {value}")
 
+
 def epoch(model: torch.nn.Module,
           optimizer: torch.optim.Optimizer,
           data_loader: DataLoader,
@@ -91,7 +93,9 @@ def epoch(model: torch.nn.Module,
 
     epoch_loss = 0.0
     epoch_true = []
+    epoch_true_cls = []
     epoch_pred = []
+    epoch_pred_cls = []
     for input_, true in data_loader:
 
         optimizer.zero_grad()
@@ -126,6 +130,7 @@ def epoch(model: torch.nn.Module,
 
     epoch_loss /= len(epoch_true)
 
+    store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "matthews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", epoch_loss)
@@ -146,7 +151,9 @@ def valid(model: torch.nn.Module,
 
     valid_loss = 0.0
     valid_true = []
+    valid_true_cls = []
     valid_pred = []
+    valid_pred_cls = []
     with torch.no_grad():
         for input_, true in data_loader:
             output = model(input_)
@@ -176,6 +183,7 @@ def valid(model: torch.nn.Module,
 
     valid_loss /= len(valid_true)
 
+    store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "mathews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", valid_loss)

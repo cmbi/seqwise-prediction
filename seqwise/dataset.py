@@ -38,4 +38,3 @@ class SequenceDataset(Dataset):
                 target = torch.tensor([hdf5_file[entry_name]["affinity"][()]], dtype=torch.float)
 
         return seq_embd, target
-
