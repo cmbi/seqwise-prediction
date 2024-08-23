@@ -1,5 +1,6 @@
 #!/usr/bin/env python
 
+from typing import List, Dict
 from argparse import ArgumentParser
 import os
 import logging
@@ -77,6 +78,10 @@ def store_metrics(path: str, phase_name: str, epoch_index: int, value_name: str,
     _log.debug(f"store {column_name}, {value}")
 
 
+def store_individual(path: str, ids: List[str], true_ba: List[int], pred_ba: List[float]):
+    pandas.DataFrame({"ID": ids, "true BA": true_ba, "predicted BA": pred_ba}).to_csv(path, index=False)
+
+
 def epoch(model: torch.nn.Module,
           optimizer: torch.optim.Optimizer,
           data_loader: DataLoader,
@@ -96,7 +101,8 @@ def epoch(model: torch.nn.Module,
     epoch_true_cls = []
     epoch_pred = []
     epoch_pred_cls = []
-    for input_, true in data_loader:
+    ids = []
+    for input_, true, id_ in data_loader:
 
         optimizer.zero_grad()
 
@@ -115,6 +121,8 @@ def epoch(model: torch.nn.Module,
         else:
             epoch_pred += output[..., 0].tolist()
             epoch_true += true[..., 0].tolist()
+
+        ids.append(id_)
 
     if classification:
         auc = roc_auc_score(epoch_true, epoch_pred)
@@ -155,7 +163,7 @@ def valid(model: torch.nn.Module,
     valid_pred = []
     valid_pred_cls = []
     with torch.no_grad():
-        for input_, true in data_loader:
+        for input_, true, id_ in data_loader:
             output = model(input_)
             batch_loss = loss_func(output, true)
 

@@ -359,15 +359,15 @@ class ReswiseModel(torch.nn.Module):
 
         c_res = 128
 
-        self.pos_encoder = PositionalEncoding(22, 9)
+        self.pos_encoder = PositionalEncoding(32, 9)
 
         self.res_transition = torch.nn.Sequential(
-            torch.nn.Linear(22, c_res),
-            torch.nn.GELU(),
+            torch.nn.Linear(32, c_res),
+            torch.nn.ReLU(),
             torch.nn.Linear(c_res, o),
         )
 
-        self.output_linear = torch.nn.Linear(9, 2)
+        self.output_linear = torch.nn.Linear(9, o)
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
@@ -388,9 +388,9 @@ class FlatteningModel(torch.nn.Module):
 
         c_transition = 512
 
-        self.res_mlp = torch.nn.Sequential(
-            torch.nn.Linear(22 * 9, c_transition),
-            torch.nn.GELU(),
+        self.sequence_mlp = torch.nn.Sequential(
+            torch.nn.Linear(32 * 9, c_transition),
+            torch.nn.ReLU(),
             torch.nn.Linear(c_transition, o),
         )
 
@@ -398,4 +398,4 @@ class FlatteningModel(torch.nn.Module):
 
         batch_size, loop_len, loop_depth = seq_embd.shape
 
-        return self.res_mlp(seq_embd.reshape(batch_size, loop_len * loop_depth))
+        return self.sequence_mlp(seq_embd.reshape(batch_size, loop_len * loop_depth))
