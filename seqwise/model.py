@@ -3,6 +3,7 @@ from math import sqrt, log
 
 import torch
 from torch.nn.functional import one_hot
+from swiftmhc.modules.position_encoding import RelativePositionEncoder as SwiftMHCRelativePositionEncoder
 
 
 def onehot_bin(x: torch.Tensor, bins: torch.Tensor) -> torch.Tensor:
@@ -121,7 +122,7 @@ class PositionalEncoding(torch.nn.Module):
         # persistent=False tells PyTorch to not add the buffer to the state dict (e.g. when we save the model)
         self.register_buffer('pe', pe, persistent=False)
 
-    def forward(self, x): 
+    def forward(self, x):
         _, l, d = x.shape
         x = x + self.pe[None, :l, :d] 
         return x
@@ -137,8 +138,6 @@ class TransformerEncoderLayer(torch.nn.Module):
         super(TransformerEncoderLayer, self).__init__()
 
         self.n_head = n_head
-
-
         self.dropout = torch.nn.Dropout(dropout)
 
         self.linear_q = torch.nn.Linear(depth, depth * self.n_head, bias=False)
@@ -157,14 +156,11 @@ class TransformerEncoderLayer(torch.nn.Module):
             torch.nn.Linear(self.ff_intermediary_depth, depth),
         )
 
-        self.pos_enc_linear = torch.nn.Linear(depth, n_head)
-
         self.norm_ff = torch.nn.LayerNorm(depth)
 
     def self_attention(
         self,
         seq: torch.Tensor,
-        pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
         batch_size, seq_len, d = seq.shape
@@ -176,9 +172,6 @@ class TransformerEncoderLayer(torch.nn.Module):
 
         # [batch_size, n_head, seq_len, seq_len]~/projects/seqwise-prediction/run.py
         a = torch.matmul(q, k.transpose(2, 3)) / sqrt(d)
-        if pos_enc is not None:
-            p = self.pos_enc_linear(pos_enc).transpose(3, 2).transpose(2, 1)
-            a += p
         a = torch.softmax(a, dim=3)
 
         # [batch_size, n_head, seq_len, d]
@@ -197,14 +190,13 @@ class TransformerEncoderLayer(torch.nn.Module):
 
     def forward(self,
                 seq: torch.Tensor,
-                pos_enc: Optional[torch.Tensor] = None,
     ) -> torch.Tensor:
 
         x = seq
 
         x = self.dropout(x)
 
-        y = self.self_attention(x, pos_enc)
+        y = self.self_attention(x)
 
         y = self.dropout(y)
         x = self.norm_att(x + y)
@@ -219,59 +211,98 @@ class TransformerEncoderLayer(torch.nn.Module):
 
 class RelativePositionEncodingModel(torch.nn.Module):
 
-    def __init__(self):
-
-        super(RelativePositionEncodingModel, self).__init__()
-
-        self.pos_encoder = RelativePositionEncoding(22, 9)
-
-        self.transf_encoder = TransformerEncoderLayer(22, 2,
-                                                      dropout=0.1)
-
-        self.res_linear = torch.nn.Linear(22, 1)
-        self.output_linear = torch.nn.Linear(9, 2)
-
-    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
-
-        pos_enc = self.pos_encoder(torch.arange(0, 9, 1, dtype=torch.float).unsqueeze(0).repeat(seq_embd.shape[0], 1))
-
-        seq_embd = self.transf_encoder(seq_embd, pos_enc)
-
-        p = self.res_linear(seq_embd)[..., 0]
-
-        return self.output_linear(p)
-
-
-class RelativeAbsolutePositionEncodingModel(torch.nn.Module):
-
     def __init__(self, classification: bool):
 
-        super(RelativeAbsolutePositionEncodingModel, self).__init__()
+        super(RelativePositionEncodingModel, self).__init__()
 
         o = 1
         if classification:
             o = 2
 
-        self.relpos_encoder = RelativePositionEncoding(22, 9)
+        self.encoder1 = SwiftMHCRelativePositionEncoder(2, 16, 32)
+        #self.encoder2 = SwiftMHCRelativePositionEncoder(2, 16, 32)
 
-        self.abspos_encoder = PositionalEncoding(22, 9)
+        self.peptide_norm = torch.nn.Sequential(
+            torch.nn.Dropout(p=0.1),
+            torch.nn.LayerNorm(32),
+        )
 
-        self.transf_encoder = TransformerEncoderLayer(22, 2, dropout=0.1)
-
-        self.res_linear = torch.nn.Linear(22, 1)
-        self.output_linear = torch.nn.Linear(9, o)
+        c_transition = 128
+        self.affinity_module = torch.nn.Sequential(
+            torch.nn.Linear(32, c_transition),
+            torch.nn.ReLU(),
+            torch.nn.Linear(c_transition, o),
+        )
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
-        seq_embd = self.abspos_encoder(seq_embd)
+        # [*, N, D]
+        x = seq_embd
 
-        relpos_enc = self.relpos_encoder(torch.arange(0, 9, 1, dtype=torch.float).unsqueeze(0).repeat(seq_embd.shape[0], 1))
+        # [*, N]
+        mask = torch.ones(x.shape[:-1], dtype=torch.bool)
 
-        seq_embd = self.transf_encoder(seq_embd, relpos_enc)
+        # [*, N, D]
+        y, a = self.encoder1(x, mask)
 
-        p = self.res_linear(seq_embd)[..., 0]
+        # [*, N, D]
+        x = self.peptide_norm(x + y)
 
-        return self.output_linear(p)
+        # [*, N, D]
+        #y, a = self.encoder1(x, mask)
+
+        # [*, N, D]
+        #x = self.peptide_norm(x + y)
+
+        # [*, N, o]
+        p = self.affinity_module(x)
+
+        # [*, o]
+        return p.sum(dim=-2)
+
+
+class AbsolutePositionEncodingModel(torch.nn.Module):
+
+    def __init__(self, classification: bool):
+
+        super(AbsolutePositionEncodingModel, self).__init__()
+
+        o = 1
+        if classification:
+            o = 2
+
+        self.posenc = PositionalEncoding(32, 9)
+
+        self.encoder1 = TransformerEncoderLayer(32, 2)
+
+        self.peptide_norm = torch.nn.Sequential(
+            torch.nn.Dropout(p=0.1),
+            torch.nn.LayerNorm(32),
+        )
+
+        c_transition = 128
+        self.affinity_module = torch.nn.Sequential(
+            torch.nn.Linear(32, c_transition),
+            torch.nn.ReLU(),
+            torch.nn.Linear(c_transition, o),
+        )
+
+    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
+
+        # [*, N, D]
+        x = self.posenc(seq_embd)
+
+        # [*, N, D]
+        y = self.encoder1(x)
+
+        # [*, N, D]
+        x = self.peptide_norm(x + y)
+
+        # [*, N, o]
+        p = self.affinity_module(x)
+
+        # [*, o]
+        return p.sum(dim=-2)
 
 
 class OuterSumModel(torch.nn.Module):
