@@ -4,48 +4,9 @@ from math import sqrt, log
 import torch
 from torch.nn.functional import one_hot
 from swiftmhc.modules.position_encoding import RelativePositionEncoder as SwiftMHCRelativePositionEncoder
+from position_encoding.relative import get_relative_position_encoding_matrix
+from position_encoding.absolute import get_absolute_position_encoding
 
-
-def onehot_bin(x: torch.Tensor, bins: torch.Tensor) -> torch.Tensor:
-    n_bins = bins.shape[0]
-
-    b = torch.argmin(torch.abs(x.unsqueeze(-1).repeat([1] * len(x.shape) + [n_bins]) - bins), dim=-1)
-    return one_hot(b, num_classes=n_bins)
-
-
-
-class RelativePositionEncoding(torch.nn.Module):
-
-    def __init__(self, c_z: int, relpos_k: int,):
-
-        super(RelativePositionEncoding, self).__init__()
-
-        self.relpos_k = relpos_k
-        self.no_bins = 2 * relpos_k + 1
-        self.linear_relpos = torch.nn.Linear(self.no_bins, c_z)
-
-    def forward(self, ri: torch.Tensor) -> torch.Tensor:
-        """
-        Computes relative positional encodings
-
-        Implements Algorithm 4.
-
-        Args:
-            ri:
-                "residue_index" features of shape [*, N]
-        """
-        d = ri[..., None] - ri[..., None, :]
-        boundaries = torch.arange(
-            start=-self.relpos_k, end=self.relpos_k + 1, device=d.device
-        )
-        reshaped_bins = boundaries.view(((1,) * len(d.shape)) + (len(boundaries),))
-        d = d[..., None] - reshaped_bins
-        d = torch.abs(d)
-        d = torch.argmin(d, dim=-1)
-        d = torch.nn.functional.one_hot(d, num_classes=len(boundaries)).float()
-        d = d.to(ri.dtype)
-
-        return self.linear_relpos(d)
 
 
 class RelativePositionEncodingWithOuterSum(torch.nn.Module):
@@ -63,18 +24,9 @@ class RelativePositionEncodingWithOuterSum(torch.nn.Module):
 
     def relpos(self, ri: torch.Tensor):
 
-        d = ri[..., None] - ri[..., None, :]
-        boundaries = torch.arange(
-            start=-self.relpos_k, end=self.relpos_k + 1, device=d.device
-        )
-        reshaped_bins = boundaries.view(((1,) * len(d.shape)) + (len(boundaries),))
-        d = d[..., None] - reshaped_bins
-        d = torch.abs(d)
-        d = torch.argmin(d, dim=-1)
-        d = torch.nn.functional.one_hot(d, num_classes=len(boundaries)).float()
-        d = d.to(ri.dtype)
+        m = get_relative_position_encoding_matrix(ri.shape[0])
 
-        return self.linear_relpos(d)
+        return self.linear_relpos(m)
 
     def forward(self, tf: torch.Tensor) -> torch.Tensor:
         """
@@ -98,35 +50,6 @@ class RelativePositionEncodingWithOuterSum(torch.nn.Module):
         pair_emb = relpos + tf_emb_i[:, :, None, :] + tf_emb_j[:, None, :, :]
 
         return pair_emb
-
-
-class PositionalEncoding(torch.nn.Module):
-
-    def __init__(self, d_model: int, max_len: int):
-        """
-        Inputs
-            d_model - Hidden dimensionality of the input.
-            max_len - Maximum length of a sequence to expect.
-        """
-        super().__init__()
-
-        # Create matrix of [SeqLen, HiddenDim] representing the positional encoding for max_len inputs
-        pe = torch.zeros(max_len, d_model)
-        position = torch.arange(0, max_len, dtype=torch.float).unsqueeze(1)
-        div_term = torch.exp(torch.arange(0, d_model, 2).float() * (-log(10000.0) / d_model))
-        pe[:, 0::2] = torch.sin(position * div_term)
-        pe[:, 1::2] = torch.cos(position * div_term)
-
-        # register_buffer => Tensor which is not a parameter, but should be part of the modules state.
-        # Used for tensors that need to be on the same device as the module.
-        # persistent=False tells PyTorch to not add the buffer to the state dict (e.g. when we save the model)
-        self.register_buffer('pe', pe, persistent=False)
-
-    def forward(self, x):
-        _, l, d = x.shape
-        x = x + self.pe[None, :l, :d] 
-        return x
-
 
 
 class TransformerEncoderLayer(torch.nn.Module):
@@ -264,7 +187,7 @@ class AbsolutePositionEncodingModel(torch.nn.Module):
         if classification:
             o = 2
 
-        self.posenc = PositionalEncoding(32, 9)
+        self.register_buffer("pe", get_absolute_position_encoding(9, 32), persistent=False)
 
         self.encoder1 = TransformerEncoderLayer(32, 2)
 
@@ -283,7 +206,7 @@ class AbsolutePositionEncodingModel(torch.nn.Module):
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
         # [*, N, D]
-        x = self.posenc(seq_embd)
+        x = seq_embd + self.pe.unsqueeze(0)
 
         # [*, N, D]
         y = self.encoder1(x)
@@ -340,39 +263,6 @@ class OuterSumModel(torch.nn.Module):
         return self.output_linear(p)
 
 
-class TransformerEncoderModel(torch.nn.Module):
-
-    def __init__(self, classification: bool):
-
-        super(TransformerEncoderModel, self).__init__()
-
-        o = 1
-        if classification:
-            o = 2
-
-        c_res = 128
-
-        self.pos_encoder = PositionalEncoding(22, 9)
-
-        self.transf_encoder = torch.nn.TransformerEncoder(
-            torch.nn.TransformerEncoderLayer(22, 2),
-            o
-        )
-
-        self.res_linear = torch.nn.Linear(22, 1)
-        self.output_linear = torch.nn.Linear(9, 2)
-
-    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
-
-        seq_embd = self.pos_encoder(seq_embd)
-
-        seq_embd = self.transf_encoder(seq_embd)
-
-        p = self.res_linear(seq_embd)[..., 0]
-
-        return self.output_linear(p)
-
-
 class RelposReswiseModel(torch.nn.Module):
     def __init__(self, classification: bool):
         super(RelposReswiseModel, self).__init__()
@@ -391,27 +281,12 @@ class RelposReswiseModel(torch.nn.Module):
             torch.nn.Linear(c_res, o),
         )
 
-        # [1, 1, 17]
-        bins = torch.arange(start=-8, end=9)[None, None, :]
-
-        # [9]
-        r = torch.arange(9)
-
-        # [9, 9, 1]
-        d = (r[:, None] - r[None, :]).unsqueeze(-1)
-
-        # [9, 9, 17]
-        p = torch.nn.functional.one_hot(
-            torch.argmin(torch.abs(d - bins), dim=-1),
-            num_classes=17
-        ).float()
-
         # [1, 9, 9, 17]
-        self.register_buffer('relpos', p.unsqueeze(0), persistent=False)
+        self.register_buffer('relpos', get_relative_position_encoding_matrix(9), persistent=False)
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
-        x = self.relpos_linear(self.relpos.reshape(1, 9, -1)) + seq_embd
+        x = self.relpos_linear(self.relpos.reshape(9, -1)).unsqueeze(0) + seq_embd
 
         p = self.mlp(x).sum(dim=-2)
 
@@ -427,7 +302,7 @@ class AbsposReswiseModel(torch.nn.Module):
 
         c_res = 128
 
-        self.pos_encoder = PositionalEncoding(32, 9)
+        self.register_buffer("pe", get_absolute_position_encoding(9, 32), persistent=False)
 
         self.res_transition = torch.nn.Sequential(
             torch.nn.Linear(32, c_res),
@@ -437,7 +312,7 @@ class AbsposReswiseModel(torch.nn.Module):
 
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
-        seq_embd = self.pos_encoder(seq_embd)
+        seq_embd = seq_embd + self.pe.unsqueeze(0)
 
         p = self.res_transition(seq_embd).sum(dim=-2)
 

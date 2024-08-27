@@ -5,6 +5,7 @@
  - scikit-learn 1.4.2 
  - h5py 3.11.0 
  - pytorch 1.0.2 
+ - position_encoding (github.com/cmbi/position-encoding)
 
 ## Data Format
 The input data must be presented as an hdf5 file, containing the following:
