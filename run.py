@@ -16,7 +16,8 @@ from torch.optim import Adam
 
 from seqwise.dataset import SequenceDataset
 from seqwise.model import (TransformerEncoderModel,
-                           ReswiseModel,
+                           AbsposReswiseModel,
+                           RelposReswiseModel,
                            FlatteningModel,
                            AbsolutePositionEncodingModel,
                            RelativePositionEncodingModel,
@@ -46,8 +47,11 @@ def get_model(model_type: str, classification: bool):
     elif model_type == "absposenc":
         return AbsolutePositionEncodingModel(classification)
 
-    elif model_type == "reswise":
-        return ReswiseModel(classification)
+    elif model_type == "abspos":
+        return AbsposReswiseModel(classification)
+
+    elif model_type == "relpos":
+        return RelposReswiseModel(classification)
 
     elif model_type == "flattening":
         return FlatteningModel(classification)

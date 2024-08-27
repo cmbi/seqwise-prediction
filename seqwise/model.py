@@ -170,7 +170,7 @@ class TransformerEncoderLayer(torch.nn.Module):
         k = self.linear_k(seq).reshape(batch_size, seq_len, self.n_head, d).transpose(1, 2)
         v = self.linear_v(seq).reshape(batch_size, seq_len, self.n_head, d).transpose(1, 2)
 
-        # [batch_size, n_head, seq_len, seq_len]~/projects/seqwise-prediction/run.py
+        # [batch_size, n_head, seq_len, seq_len]
         a = torch.matmul(q, k.transpose(2, 3)) / sqrt(d)
         a = torch.softmax(a, dim=3)
 
@@ -220,7 +220,6 @@ class RelativePositionEncodingModel(torch.nn.Module):
             o = 2
 
         self.encoder1 = SwiftMHCRelativePositionEncoder(2, 16, 32)
-        #self.encoder2 = SwiftMHCRelativePositionEncoder(2, 16, 32)
 
         self.peptide_norm = torch.nn.Sequential(
             torch.nn.Dropout(p=0.1),
@@ -247,12 +246,6 @@ class RelativePositionEncodingModel(torch.nn.Module):
 
         # [*, N, D]
         x = self.peptide_norm(x + y)
-
-        # [*, N, D]
-        #y, a = self.encoder1(x, mask)
-
-        # [*, N, D]
-        #x = self.peptide_norm(x + y)
 
         # [*, N, o]
         p = self.affinity_module(x)
@@ -380,9 +373,53 @@ class TransformerEncoderModel(torch.nn.Module):
         return self.output_linear(p)
 
 
-class ReswiseModel(torch.nn.Module):
+class RelposReswiseModel(torch.nn.Module):
     def __init__(self, classification: bool):
-        super(ReswiseModel, self).__init__()
+        super(RelposReswiseModel, self).__init__()
+
+        o = 1
+        if classification:
+            o = 2
+
+        c_res = 128
+
+        self.relpos_linear = torch.nn.Linear(17 * 9, 32)
+
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(32, c_res),
+            torch.nn.ReLU(),
+            torch.nn.Linear(c_res, o),
+        )
+
+        # [1, 1, 17]
+        bins = torch.arange(start=-8, end=9)[None, None, :]
+
+        # [9]
+        r = torch.arange(9)
+
+        # [9, 9, 1]
+        d = (r[:, None] - r[None, :]).unsqueeze(-1)
+
+        # [9, 9, 17]
+        p = torch.nn.functional.one_hot(
+            torch.argmin(torch.abs(d - bins), dim=-1),
+            num_classes=17
+        ).float()
+
+        # [1, 9, 9, 17]
+        self.register_buffer('relpos', p.unsqueeze(0), persistent=False)
+
+    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
+
+        x = self.relpos_linear(self.relpos.reshape(1, 9, -1)) + seq_embd
+
+        p = self.mlp(x).sum(dim=-2)
+
+        return p
+
+class AbsposReswiseModel(torch.nn.Module):
+    def __init__(self, classification: bool):
+        super(AbsposReswiseModel, self).__init__()
 
         o = 1
         if classification:
@@ -398,15 +435,13 @@ class ReswiseModel(torch.nn.Module):
             torch.nn.Linear(c_res, o),
         )
 
-        self.output_linear = torch.nn.Linear(9, o)
-
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
         seq_embd = self.pos_encoder(seq_embd)
 
-        p = self.res_transition(seq_embd)[..., 0]
+        p = self.res_transition(seq_embd).sum(dim=-2)
 
-        return self.output_linear(p)
+        return p
 
 
 class FlatteningModel(torch.nn.Module):
