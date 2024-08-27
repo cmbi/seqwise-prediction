@@ -15,17 +15,17 @@ from torch.utils.data import DataLoader
 from torch.optim import Adam
 
 from seqwise.dataset import SequenceDataset
-from seqwise.model import (TransformerEncoderModel,
-                           AbsposReswiseModel,
+from seqwise.model import (AbsposReswiseModel,
                            RelposReswiseModel,
+                           OutersumModel,
                            FlatteningModel,
                            AbsolutePositionEncodingModel,
                            RelativePositionEncodingModel,
-                           OuterSumModel)
+                           OutersumModel)
 
 
 arg_parser = ArgumentParser(description="train a model and output the results")
-arg_parser.add_argument("model_type", help="must be relpos/reswise/flattening")
+arg_parser.add_argument("model_type", help="must be relpos/abspos/outersum/flattening")
 arg_parser.add_argument("train_file", help="HDF5 file with training data")
 arg_parser.add_argument("valid_file", help="HDF5 file with validation data")
 arg_parser.add_argument("test_file", help="HDF5 file with test data")
@@ -52,6 +52,9 @@ def get_model(model_type: str, classification: bool):
 
     elif model_type == "relpos":
         return RelposReswiseModel(classification)
+
+    elif model_type == "outersum":
+        return OutersumModel(classification)
 
     elif model_type == "flattening":
         return FlatteningModel(classification)

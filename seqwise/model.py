@@ -263,6 +263,43 @@ class OuterSumModel(torch.nn.Module):
         return self.output_linear(p)
 
 
+class OutersumModel(torch.nn.Module):
+    def __init__(self, classification: bool):
+        super(RelposReswiseModel, self).__init__()
+
+        o = 1 
+        if classification:
+            o = 2 
+
+        c_res = 128 
+
+        self.lin_relpos = torch.nn.Linear(17, 16)
+
+        self.lin_i = torch.nn.Linear(32, 16) 
+        self.lin_j = torch.nn.Linear(32, 16) 
+
+        self.mlp = torch.nn.Sequential(
+            torch.nn.Linear(16, c_res),
+            torch.nn.ReLU(),
+            torch.nn.Linear(c_res, o), 
+        )
+
+        # [1, 9, 9, 17]
+        self.register_buffer('relpos', get_relative_position_encoding_matrix(9, 17).float(), persistent=False)
+
+    def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
+
+        # [*, 9, 9, 16]
+        x = self.lin_relpos(self.relpos)[None, ...]
+        y = self.lin_i(seq_embd)[..., :, None, :]
+        z = self.lin_j(seq_embd)[..., None, :, :]
+
+        # [*, o]
+        p = self.mlp(x + y + z).sum(dim=(-3, -2))
+
+        return p
+
+
 class RelposReswiseModel(torch.nn.Module):
     def __init__(self, classification: bool):
         super(RelposReswiseModel, self).__init__()
@@ -291,6 +328,7 @@ class RelposReswiseModel(torch.nn.Module):
         p = self.mlp(x).sum(dim=-2)
 
         return p
+
 
 class AbsposReswiseModel(torch.nn.Module):
     def __init__(self, classification: bool):
