@@ -16,7 +16,6 @@ from torch.optim import Adam
 
 from seqwise.dataset import SequenceDataset
 from seqwise.model import (AbsposReswiseModel,
-                           RelposReswiseModel,
                            OutersumModel,
                            FlatteningModel,
                            AbsolutePositionEncodingModel,
@@ -49,9 +48,6 @@ def get_model(model_type: str, classification: bool):
 
     elif model_type == "abspos":
         return AbsposReswiseModel(classification)
-
-    elif model_type == "relpos":
-        return RelposReswiseModel(classification)
 
     elif model_type == "outersum":
         return OutersumModel(classification)
@@ -139,7 +135,6 @@ def epoch(model: torch.nn.Module,
 
     epoch_loss /= len(epoch_true)
 
-    store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "matthews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", epoch_loss)
@@ -192,7 +187,6 @@ def valid(model: torch.nn.Module,
 
     valid_loss /= len(valid_true)
 
-    store_metrics(metrics_path, phase_name, epoch_index, "pearson correlation", pcc)
     store_metrics(metrics_path, phase_name, epoch_index, "ROC AUC", auc)
     store_metrics(metrics_path, phase_name, epoch_index, "mathews correlation", mcc)
     store_metrics(metrics_path, phase_name, epoch_index, "loss", valid_loss)
