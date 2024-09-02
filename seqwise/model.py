@@ -190,10 +190,12 @@ class OutersumModel(torch.nn.Module):
         self.lin_i = torch.nn.Linear(32, 32)
         self.lin_j = torch.nn.Linear(32, 32)
 
+        self.lin_relpos = torch.nn.Linear(32, 32)
+
         self.mlp = torch.nn.Sequential(
             torch.nn.Linear(32, c_res),
             torch.nn.ReLU(),
-            torch.nn.Linear(c_res, o), 
+            torch.nn.Linear(c_res, o),
         )
 
         # [1, 9, 9, 17]
@@ -202,12 +204,12 @@ class OutersumModel(torch.nn.Module):
     def forward(self, seq_embd: torch.Tensor) -> torch.Tensor:
 
         # [*, 9, 9, 16]
-        x = self.relpos[None, ...]
-        y = self.lin_i(seq_embd)[..., :, None, :]
-        z = self.lin_j(seq_embd)[..., None, :, :]
+        r = self.lin_relpos(self.relpos)[None, ...]
+        x = self.lin_i(seq_embd)[..., :, None, :]
+        y = self.lin_j(seq_embd)[..., None, :, :]
 
         # [*, o]
-        p = self.mlp(x + y + z).sum(dim=(-3, -2))
+        p = self.mlp(x + y + r).sum(dim=(-3, -2))
 
         return p
 
