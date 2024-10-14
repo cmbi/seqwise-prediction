@@ -18,13 +18,13 @@ from seqwise.dataset import SequenceDataset
 from seqwise.model import (AbsposReswiseModel,
                            OutersumModel,
                            FlatteningModel,
+                           RelativePositionEncoder,
                            AbsolutePositionEncodingModel,
-                           RelativePositionEncodingModel,
                            OutersumModel)
 
 
 arg_parser = ArgumentParser(description="train a model and output the results")
-arg_parser.add_argument("model_type", help="must be relpos/abspos/outersum/flattening")
+arg_parser.add_argument("model_type", help="must be relposenc/absposenc/abspos/outersum/flattening")
 arg_parser.add_argument("train_file", help="HDF5 file with training data")
 arg_parser.add_argument("valid_file", help="HDF5 file with validation data")
 arg_parser.add_argument("test_file", help="HDF5 file with test data")
@@ -41,7 +41,7 @@ _log = logging.getLogger(__name__)
 def get_model(model_type: str, classification: bool):
 
     if model_type == "relposenc":
-        return RelativePositionEncodingModel(classification)
+        return RelativePositionEncoder(classification)
 
     elif model_type == "absposenc":
         return AbsolutePositionEncodingModel(classification)
